@@ -8,6 +8,15 @@ import TaskManager from "./pages/TaskManager";
 import Registry from "./pages/Registry";
 import EventViewer from "./pages/EventViewer";
 import Report from "./pages/Report";
+
+// NEW PAGES
+import ProcessTree from "./pages/ProcessTree";
+import LogsLive from "./pages/LogsLive";
+import DiskNetwork from "./components/DiskNetwork";
+
+// GLOBAL ALERT TOASTS
+import Alerts from "./components/Alerts";
+
 import { motion, AnimatePresence } from "framer-motion";
 
 export default function App() {
@@ -21,15 +30,31 @@ export default function App() {
       case "Registry": return <Registry />;
       case "Event Viewer": return <EventViewer />;
       case "Report": return <Report />;
+
+      // NEW ROUTES
+      case "Process Tree": return <ProcessTree />;
+      case "Live Logs": return <LogsLive />;
+      case "Disk & Network": return <DiskNetwork />;
+
       default: return <Dashboard />;
     }
   };
 
   return (
     <div className="min-h-screen bg-gray-100 dark:bg-gray-950">
-      <Sidebar selected={selected} setSelected={setSelected} collapsed={collapsed} setCollapsed={setCollapsed} />
+      
+      <Sidebar 
+        selected={selected} 
+        setSelected={setSelected} 
+        collapsed={collapsed} 
+        setCollapsed={setCollapsed} 
+      />
+
       <div style={{ marginLeft: collapsed ? 80 : 256 }} className="transition-all">
+        
         <Topbar />
+        <Alerts />  {/* GLOBAL ALERTS */}
+
         <div className="p-8">
           <AnimatePresence mode="wait">
             <motion.div
@@ -43,7 +68,8 @@ export default function App() {
             </motion.div>
           </AnimatePresence>
         </div>
+
       </div>
     </div>
-  )
+  );
 }

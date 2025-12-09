@@ -6,17 +6,22 @@ import {
   Cog6ToothIcon,
   ServerIcon,
   DocumentTextIcon,
-  Bars3Icon
+  Bars3Icon,
+  ArrowPathIcon,
+  ComputerDesktopIcon
 } from "@heroicons/react/24/outline";
 import classNames from 'classnames';
 
 export default function Sidebar({ selected, setSelected, collapsed, setCollapsed }) {
   const menu = [
     { name: "Dashboard", icon: ChartBarIcon },
-    { name: "Task Manager", icon: ListBulletIcon },
-    { name: "Registry", icon: Cog6ToothIcon },
-    { name: "Event Viewer", icon: ServerIcon },
-    { name: "Report", icon: DocumentTextIcon }
+  { name: "Task Manager", icon: ListBulletIcon },
+  { name: "Process Tree", icon: ComputerDesktopIcon },
+  { name: "Live Logs", icon: ArrowPathIcon },
+  { name: "Registry", icon: Cog6ToothIcon },
+  { name: "Event Viewer", icon: ServerIcon },
+  { name: "Disk & Network", icon: DocumentTextIcon },
+  { name: "Report", icon: DocumentTextIcon }
   ];
 
   return (

@@ -1,40 +1,72 @@
 // frontend/src/context/StatsContext.jsx
-import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
-import { io } from 'socket.io-client';
+import React, { createContext, useContext, useEffect, useRef, useState } from "react";
+import { io } from "socket.io-client";
 
 const StatsContext = createContext();
 
 export function StatsProvider({ children }) {
-  const [latest, setLatest] = useState({ cpu: 0, ram: 0, time: null });
-  const [history, setHistory] = useState([]); // keep rolling history
   const socketRef = useRef(null);
 
+  const [latest, setLatest] = useState({ cpu: 0, ram: 0, time: null });
+  const [history, setHistory] = useState([]); // rolling {time,cpu,ram}
+  const [processTree, setProcessTree] = useState([]);
+  const [events, setEvents] = useState([]); // raw event objects
+  const [diskNetwork, setDiskNetwork] = useState({ diskIO: {}, fsSize: [], network: [] });
+  const [alerts, setAlerts] = useState([]);
+
   useEffect(() => {
-    socketRef.current = io('http://localhost:5000');
+    // change URL if your backend is remote (use env var)
+    const SOCKET_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:5000";
+    socketRef.current = io(SOCKET_URL, { transports: ["websocket", "polling"] });
+    const s = socketRef.current;
 
-    socketRef.current.on('connect', () => {
-      console.log('connected to stats socket', socketRef.current.id);
-    });
+    s.on("connect", () => console.log("socket connected", s.id));
 
-    socketRef.current.on('stats', (s) => {
-      setLatest(s);
+    s.on("stats", (st) => {
+      if (!st) return;
+      setLatest(st);
       setHistory(prev => {
-        const next = [...prev.slice(-59), { time: new Date(s.time).toLocaleTimeString(), cpu: s.cpu, ram: s.ram }];
+        const next = [...prev.slice(-119), { time: new Date(st.time).toLocaleTimeString(), cpu: st.cpu, ram: st.ram }];
         return next;
       });
     });
 
-    socketRef.current.on('disconnect', () => {
-      console.log('socket disconnected');
+    s.on("processTree", (tree) => {
+      setProcessTree(Array.isArray(tree) ? tree : (tree ? [tree] : []));
     });
 
+    s.on("events", (ev) => {
+      // normalize to array
+      const arr = Array.isArray(ev) ? ev : [ev];
+      setEvents(prev => {
+        const combined = [...arr.reverse(), ...prev].slice(0, 1000); // newest first
+        return combined;
+      });
+    });
+
+    s.on("diskNetwork", (dn) => {
+      setDiskNetwork(dn || {});
+    });
+
+    s.on("liveLogs", (l) => {
+      setEvents(prev => [l, ...prev].slice(0, 1000));
+    });
+
+    s.on("alert", (a) => {
+      if (!a) return;
+      setAlerts(prev => [a, ...prev].slice(0, 50));
+      // optional: prune alerts older than N
+    });
+
+    s.on("disconnect", () => console.log("socket disconnected"));
+
     return () => {
-      socketRef.current?.disconnect();
+      try { s.disconnect(); } catch(e){}
     };
   }, []);
 
   return (
-    <StatsContext.Provider value={{ latest, history }}>
+    <StatsContext.Provider value={{ latest, history, processTree, events, diskNetwork, alerts }}>
       {children}
     </StatsContext.Provider>
   );

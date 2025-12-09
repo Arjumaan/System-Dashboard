@@ -1,58 +1,131 @@
+// frontend/src/pages/TaskManager.jsx
 import { useEffect, useState } from "react";
 import axios from "axios";
 import LoadingSkeleton from "../components/LoadingSkeleton";
+import ConfirmModal from "../components/ConfirmModal";
 
 export default function TaskManager() {
   const [proc, setProc] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
 
-  useEffect(() => {
+  // Multi-select kill
+  const [selected, setSelected] = useState(new Set());
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [toKill, setToKill] = useState(null);
+
+  // Right-click menu
+  const [contextMenu, setContextMenu] = useState(null);
+
+  const backend = import.meta.env.VITE_BACKEND_URL || "http://localhost:5000";
+
+  const loadProcesses = () => {
     axios
-      .get("http://localhost:5000/system/processes")
+      .get(`${backend}/system/processes`)
       .then((res) => {
         setProc(res.data);
         setLoading(false);
       })
       .catch(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    loadProcesses();
   }, []);
 
-  const filtered = proc.filter((p) =>
-    p.name.toLowerCase().includes(search.toLowerCase())
+  const filtered = proc.filter(
+    (p) =>
+      p.name?.toLowerCase().includes(search.toLowerCase()) ||
+      String(p.pid).includes(search)
   );
 
+  const toggleSelection = (pid) => {
+    const next = new Set(selected);
+    if (next.has(pid)) next.delete(pid);
+    else next.add(pid);
+    setSelected(next);
+  };
+
+  const killProcess = async (pid) => {
+    await axios.post(`${backend}/system/kill`, { pid });
+  };
+
+  const killBulk = async () => {
+    for (const pid of toKill) {
+      await killProcess(pid);
+    }
+    loadProcesses();
+  };
+
+  const openContextMenu = (e, pid) => {
+    e.preventDefault();
+    setContextMenu({ x: e.pageX, y: e.pageY, pid });
+  };
+
+  const closeContextMenu = () => setContextMenu(null);
+
   return (
-    <div>
+    <div onClick={closeContextMenu}>
       <h1 className="text-2xl font-bold mb-6 dark:text-white">Task Manager</h1>
 
       <input
-        placeholder="Search process..."
+        placeholder="Search process…"
         className="p-3 border rounded-lg mb-4 w-full md:w-1/3 dark:bg-gray-900 dark:text-white"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
       />
 
+      {/* Bulk Kill Button */}
+      {selected.size > 0 && (
+        <button
+          onClick={() => {
+            setToKill(Array.from(selected));
+            setConfirmOpen(true);
+          }}
+          className="mb-4 px-4 py-2 bg-red-600 text-white rounded"
+        >
+          Kill Selected ({selected.size})
+        </button>
+      )}
+
+      {/* Table */}
       {loading ? (
         <>
           <LoadingSkeleton height={40} width="60%" />
-          <div className="mt-4">
-            <LoadingSkeleton height={300} width="100%" />
-          </div>
+          <LoadingSkeleton height={300} width="100%" className="mt-4" />
         </>
       ) : (
         <table className="w-full bg-white dark:bg-gray-800 shadow rounded-xl">
           <thead className="bg-gray-200 dark:bg-gray-700">
             <tr>
+              <th className="p-3 text-left">Select</th>
               <th className="p-3 text-left">Process</th>
+              <th className="p-3 text-left">PID</th>
               <th className="p-3 text-left">CPU</th>
               <th className="p-3 text-left">Memory</th>
+              <th className="p-3 text-left">Action</th>
             </tr>
           </thead>
 
           <tbody>
             {filtered.map((p) => (
-              <tr key={p.pid} className="border-b dark:border-gray-700">
+              <tr
+                key={p.pid}
+                className="border-b dark:border-gray-700 cursor-pointer"
+                onContextMenu={(e) => openContextMenu(e, p.pid)}
+              >
+                {/* Checkbox */}
+                <td className="p-3">
+                  <input
+                    type="checkbox"
+                    checked={selected.has(p.pid)}
+                    onChange={() => toggleSelection(p.pid)}
+                  />
+                </td>
+
                 <td className="p-3">{p.name}</td>
+
+                <td className="p-3">{p.pid}</td>
 
                 <td className="p-3 font-semibold">
                   <span
@@ -68,12 +141,64 @@ export default function TaskManager() {
                   </span>
                 </td>
 
-                <td className="p-3 font-semibold">{p.mem.toFixed(2)}%</td>
+                <td className="p-3 font-semibold">
+                  {p.mem.toFixed(2)}%
+                </td>
+
+                {/* Kill button */}
+                <td className="p-3">
+                  <button
+                    onClick={() => {
+                      setToKill([p.pid]);
+                      setConfirmOpen(true);
+                    }}
+                    className="px-3 py-1 bg-red-600 text-white rounded"
+                  >
+                    Kill
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       )}
+
+      {/* Right-click menu */}
+      {contextMenu && (
+        <div
+          className="fixed bg-white dark:bg-gray-700 border shadow-lg rounded py-2 text-sm z-50"
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+        >
+          <button
+            className="block w-full px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-600"
+            onClick={() => {
+              setToKill([contextMenu.pid]);
+              setConfirmOpen(true);
+              closeContextMenu();
+            }}
+          >
+            Kill Process
+          </button>
+        </div>
+      )}
+
+      {/* Confirmation Modal */}
+      <ConfirmModal
+        open={confirmOpen}
+        title="Terminate Process"
+        message={
+          Array.isArray(toKill)
+            ? `Kill ${toKill.length} process(es)?`
+            : `Kill process ${toKill}?`
+        }
+        onCancel={() => setConfirmOpen(false)}
+        onConfirm={async () => {
+          setConfirmOpen(false);
+          if (Array.isArray(toKill)) await killBulk();
+          else await killProcess(toKill);
+          loadProcesses();
+        }}
+      />
     </div>
   );
 }

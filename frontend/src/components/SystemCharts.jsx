@@ -19,6 +19,7 @@ export default function SystemCharts() {
         Live System Charts
       </h2>
 
+      <div id="chart-root" className="mt-10 bg-white dark:bg-gray-800 p-6 rounded-xl shadow">
       <ResponsiveContainer width="100%" height={300}>
         <LineChart data={history}>
           <XAxis dataKey="time" />
@@ -41,6 +42,7 @@ export default function SystemCharts() {
           />
         </LineChart>
       </ResponsiveContainer>
+      </div>
     </div>
   );
 }
