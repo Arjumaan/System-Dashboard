@@ -1,51 +1,74 @@
 // frontend/src/components/Gauges.jsx
-import React from 'react';
-import { CircularProgressbar, buildStyles } from 'react-circular-progressbar';
-import 'react-circular-progressbar/dist/styles.css';
-import { useStats } from '../context/StatsContext';
+import React from "react";
+import { CircularProgressbar, buildStyles } from "react-circular-progressbar";
+import "react-circular-progressbar/dist/styles.css";
+import { useStats } from "../context/StatsContext";
 
 export default function Gauges() {
   const { latest } = useStats();
 
+  const cpu = latest?.cpu ?? 0;
+  const ram = latest?.ram ?? 0;
+
+  const getColor = (val) => {
+    if (val >= 80) return "#dc2626";       // red
+    if (val >= 60) return "#f59e0b";       // yellow
+    return "#22c55e";                      // green
+  };
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
-      <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow flex items-center">
-        <div style={{ width: 120, height: 120 }}>
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6 animate-fadeIn">
+
+      {/* CPU Gauge */}
+      <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-lg flex items-center border dark:border-gray-700">
+        <div
+          style={{ width: 130, height: 130 }}
+          className="transition-transform duration-300"
+        >
           <CircularProgressbar
-            value={latest.cpu}
-            text={`${latest.cpu}%`}
+            value={cpu}
+            text={`${cpu}%`}
             maxValue={100}
             styles={buildStyles({
-              textColor: '#111827',
-              pathColor: '#2563eb',
-              trailColor: '#e5e7eb',
-              textSize: '16px'
+              textColor: "#ffffff",
+              pathColor: getColor(cpu),
+              trailColor: "rgba(255,255,255,0.1)",
+              textSize: "16px",
+              pathTransitionDuration: 0.5,
             })}
           />
         </div>
+
         <div className="ml-6">
           <h4 className="text-lg font-semibold dark:text-white">CPU</h4>
-          <p className="text-sm text-gray-600 dark:text-gray-300">Live CPU Usage</p>
+          <p className="text-sm text-gray-600 dark:text-gray-300">
+            Live CPU Usage
+          </p>
         </div>
       </div>
 
-      <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow flex items-center">
-        <div style={{ width: 120, height: 120 }}>
+      {/* RAM Gauge */}
+      <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-lg flex items-center border dark:border-gray-700">
+        <div style={{ width: 130, height: 130 }}>
           <CircularProgressbar
-            value={latest.ram}
-            text={`${latest.ram}%`}
+            value={ram}
+            text={`${ram}%`}
             maxValue={100}
             styles={buildStyles({
-              textColor: '#111827',
-              pathColor: '#16a34a',
-              trailColor: '#e5e7eb',
-              textSize: '16px'
+              textColor: "#ffffff",
+              pathColor: getColor(ram),
+              trailColor: "rgba(255,255,255,0.1)",
+              textSize: "16px",
+              pathTransitionDuration: 0.5,
             })}
           />
         </div>
+
         <div className="ml-6">
           <h4 className="text-lg font-semibold dark:text-white">RAM</h4>
-          <p className="text-sm text-gray-600 dark:text-gray-300">Live RAM Usage</p>
+          <p className="text-sm text-gray-600 dark:text-gray-300">
+            Live RAM Usage
+          </p>
         </div>
       </div>
     </div>

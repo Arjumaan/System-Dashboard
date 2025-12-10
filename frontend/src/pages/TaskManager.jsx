@@ -9,12 +9,10 @@ export default function TaskManager() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
 
-  // Multi-select kill
   const [selected, setSelected] = useState(new Set());
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [toKill, setToKill] = useState(null);
 
-  // Right-click menu
   const [contextMenu, setContextMenu] = useState(null);
 
   const backend = import.meta.env.VITE_BACKEND_URL || "http://localhost:5000";
@@ -31,6 +29,8 @@ export default function TaskManager() {
 
   useEffect(() => {
     loadProcesses();
+    const interval = setInterval(loadProcesses, 5000);
+    return () => clearInterval(interval);
   }, []);
 
   const filtered = proc.filter(
@@ -41,20 +41,33 @@ export default function TaskManager() {
 
   const toggleSelection = (pid) => {
     const next = new Set(selected);
-    if (next.has(pid)) next.delete(pid);
-    else next.add(pid);
+    next.has(pid) ? next.delete(pid) : next.add(pid);
     setSelected(next);
   };
 
   const killProcess = async (pid) => {
-    await axios.post(`${backend}/system/kill`, { pid });
+    try {
+      const res = await axios.post(`${backend}/system/kill`, { pid });
+      alert(`Kill requested for PID ${pid}`);
+    } catch (err) {
+      alert("Kill failed: " + (err.response?.data?.error || err.message));
+    } finally {
+      loadProcesses();
+    }
   };
 
   const killBulk = async () => {
-    for (const pid of toKill) {
-      await killProcess(pid);
+    try {
+      for (const pid of toKill) {
+        await killProcess(pid);
+      }
+      alert(`Kill requested for ${toKill.length} processes`);
+    } catch (err) {
+      alert("Bulk kill error: " + err.message);
+    } finally {
+      loadProcesses();
+      setSelected(new Set());
     }
-    loadProcesses();
   };
 
   const openContextMenu = (e, pid) => {
@@ -75,7 +88,6 @@ export default function TaskManager() {
         onChange={(e) => setSearch(e.target.value)}
       />
 
-      {/* Bulk Kill Button */}
       {selected.size > 0 && (
         <button
           onClick={() => {
@@ -88,7 +100,6 @@ export default function TaskManager() {
         </button>
       )}
 
-      {/* Table */}
       {loading ? (
         <>
           <LoadingSkeleton height={40} width="60%" />
@@ -98,7 +109,7 @@ export default function TaskManager() {
         <table className="w-full bg-white dark:bg-gray-800 shadow rounded-xl">
           <thead className="bg-gray-200 dark:bg-gray-700">
             <tr>
-              <th className="p-3 text-left">Select</th>
+              <th className="p-3">Select</th>
               <th className="p-3 text-left">Process</th>
               <th className="p-3 text-left">PID</th>
               <th className="p-3 text-left">CPU</th>
@@ -114,7 +125,6 @@ export default function TaskManager() {
                 className="border-b dark:border-gray-700 cursor-pointer"
                 onContextMenu={(e) => openContextMenu(e, p.pid)}
               >
-                {/* Checkbox */}
                 <td className="p-3">
                   <input
                     type="checkbox"
@@ -141,11 +151,8 @@ export default function TaskManager() {
                   </span>
                 </td>
 
-                <td className="p-3 font-semibold">
-                  {p.mem.toFixed(2)}%
-                </td>
+                <td className="p-3 font-semibold">{p.mem.toFixed(2)}%</td>
 
-                {/* Kill button */}
                 <td className="p-3">
                   <button
                     onClick={() => {
@@ -163,7 +170,6 @@ export default function TaskManager() {
         </table>
       )}
 
-      {/* Right-click menu */}
       {contextMenu && (
         <div
           className="fixed bg-white dark:bg-gray-700 border shadow-lg rounded py-2 text-sm z-50"
@@ -182,7 +188,6 @@ export default function TaskManager() {
         </div>
       )}
 
-      {/* Confirmation Modal */}
       <ConfirmModal
         open={confirmOpen}
         title="Terminate Process"
@@ -196,7 +201,6 @@ export default function TaskManager() {
           setConfirmOpen(false);
           if (Array.isArray(toKill)) await killBulk();
           else await killProcess(toKill);
-          loadProcesses();
         }}
       />
     </div>

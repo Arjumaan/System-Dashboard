@@ -1,5 +1,6 @@
 // frontend/src/App.jsx
 import { useState } from "react";
+
 import Sidebar from "./layout/Sidebar";
 import Topbar from "./layout/Topbar";
 
@@ -8,13 +9,10 @@ import TaskManager from "./pages/TaskManager";
 import Registry from "./pages/Registry";
 import EventViewer from "./pages/EventViewer";
 import Report from "./pages/Report";
-
-// NEW PAGES
 import ProcessTree from "./pages/ProcessTree";
 import LogsLive from "./pages/LogsLive";
-import DiskNetwork from "./components/DiskNetwork";
 
-// GLOBAL ALERT TOASTS
+import DiskNetwork from "./components/DiskNetwork";
 import Alerts from "./components/Alerts";
 
 import { motion, AnimatePresence } from "framer-motion";
@@ -25,35 +23,42 @@ export default function App() {
 
   const renderPage = () => {
     switch (selected) {
-      case "Dashboard": return <Dashboard />;
-      case "Task Manager": return <TaskManager />;
-      case "Registry": return <Registry />;
-      case "Event Viewer": return <EventViewer />;
-      case "Report": return <Report />;
-
-      // NEW ROUTES
-      case "Process Tree": return <ProcessTree />;
-      case "Live Logs": return <LogsLive />;
-      case "Disk & Network": return <DiskNetwork />;
-
-      default: return <Dashboard />;
+      case "Dashboard":
+        return <Dashboard />;
+      case "Task Manager":
+        return <TaskManager />;
+      case "Registry":
+        return <Registry />;
+      case "Event Viewer":
+        return <EventViewer />;
+      case "Report":
+        return <Report />;
+      case "Process Tree":
+        return <ProcessTree />;
+      case "Live Logs":
+        return <LogsLive />;
+      case "Disk & Network":
+        return <DiskNetwork />;
+      default:
+        return <Dashboard />;
     }
   };
 
   return (
-    <div className="min-h-screen bg-gray-100 dark:bg-gray-950">
-      
-      <Sidebar 
-        selected={selected} 
-        setSelected={setSelected} 
-        collapsed={collapsed} 
-        setCollapsed={setCollapsed} 
+    <div className="min-h-screen bg-gray-100 dark:bg-gray-950 text-gray-900 dark:text-white">
+      <Sidebar
+        selected={selected}
+        setSelected={setSelected}
+        collapsed={collapsed}
+        setCollapsed={setCollapsed}
       />
 
-      <div style={{ marginLeft: collapsed ? 80 : 256 }} className="transition-all">
-        
+      <div
+        style={{ marginLeft: collapsed ? 80 : 256 }}
+        className="transition-all"
+      >
         <Topbar />
-        <Alerts />  {/* GLOBAL ALERTS */}
+        <Alerts />
 
         <div className="p-8">
           <AnimatePresence mode="wait">
@@ -68,7 +73,6 @@ export default function App() {
             </motion.div>
           </AnimatePresence>
         </div>
-
       </div>
     </div>
   );

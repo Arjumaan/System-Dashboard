@@ -6,30 +6,176 @@ const { Server } = require("socket.io");
 const si = require("systeminformation");
 const { exec } = require("child_process");
 const fs = require("fs");
-const path = require("path");
 const PDFDocument = require("pdfkit");
 
-// optional existing route modules (if missing, create simple routers)
-let systemRoutes = null, registryRoutes = null, eventRoutes = null, reportRoutes = null;
-try { systemRoutes = require("./routes/system"); } catch(e){ systemRoutes = null; }
-try { registryRoutes = require("./routes/registry"); } catch(e){ registryRoutes = null; }
-try { eventRoutes = require("./routes/events"); } catch(e){ eventRoutes = null; }
-try { reportRoutes = require("./routes/report"); } catch(e){ reportRoutes = null; }
-
+// ----------------------------------------------------
+// EXPRESS APP
+// ----------------------------------------------------
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Register existing REST routers if present
-if (systemRoutes) app.use("/system", systemRoutes);
-if (registryRoutes) app.use("/registry", registryRoutes);
-if (eventRoutes) app.use("/events", eventRoutes);
-if (reportRoutes) app.use("/report", reportRoutes);
+// ----------------------------------------------------
+// SAFE ROUTES IMPORT
+// ----------------------------------------------------
+function safeRoute(path) {
+  try { return require(path); }
+  catch { return null; }
+}
 
+const systemRoutes   = safeRoute("./routes/system");
+const registryRoutes = safeRoute("./routes/registry");
+const eventRoutes    = safeRoute("./routes/events");
+const reportRoutes   = safeRoute("./routes/report");
+
+if (systemRoutes)   app.use("/system", systemRoutes);
+if (registryRoutes) app.use("/registry", registryRoutes);
+if (eventRoutes)    app.use("/events", eventRoutes);
+if (reportRoutes)   app.use("/report", reportRoutes);
+
+// ----------------------------------------------------
+// HTTP + WebSocket
+// ----------------------------------------------------
 const httpServer = http.createServer(app);
 const io = new Server(httpServer, { cors: { origin: "*" } });
 
-// --- SOCKET.IO connection ---
+// ----------------------------------------------------
+// PROCESS TREE BUILDER
+// ----------------------------------------------------
+async function buildProcessTree() {
+  try {
+    const p = await si.processes();
+    const list = p.list || [];
+
+    const map = {};
+    list.forEach(proc => {
+      map[proc.pid] = { ...proc, children: [] };
+    });
+
+    const roots = [];
+    list.forEach(proc => {
+      if (map[proc.ppid]) {
+        map[proc.ppid].children.push(map[proc.pid]);
+      } else {
+        roots.push(map[proc.pid]);
+      }
+    });
+
+    return roots;
+  } catch (err) {
+    console.error("Process tree error:", err);
+    return [];
+  }
+}
+
+// ----------------------------------------------------
+// EMIT PROCESS TREE  (THIS WAS MISSING earlier)
+// ----------------------------------------------------
+async function emitProcessTree() {
+  try {
+    const tree = await buildProcessTree();
+    io.emit("processTree", tree);
+  } catch (err) {
+    console.error("emitProcessTree error:", err);
+  }
+}
+
+// ----------------------------------------------------
+// EMIT CPU + RAM STATS
+// ----------------------------------------------------
+async function emitStats() {
+  try {
+    const cpu = await si.currentLoad();
+    const mem = await si.mem();
+
+    const stats = {
+      cpu: Number(cpu.currentLoad.toFixed(2)),
+      ram: Number(((mem.active / mem.total) * 100).toFixed(2)),
+      time: new Date().toISOString()
+    };
+
+    io.emit("stats", stats);
+    handleAlerts(stats);
+  } catch (err) {
+    console.error("Stats error:", err);
+  }
+}
+
+// ----------------------------------------------------
+// EMIT DISK & NETWORK METRICS
+// ----------------------------------------------------
+async function emitDiskNetwork() {
+  try {
+    const diskIO = await si.disksIO();
+    const fsSize = await si.fsSize();
+    const network = await si.networkStats();
+
+    io.emit("diskNetwork", {
+      diskIO: {
+        rIO: diskIO.rIO ?? 0,
+        wIO: diskIO.wIO ?? 0,
+        rBytes: diskIO.rBytes ?? 0,
+        wBytes: diskIO.wBytes ?? 0
+      },
+      fsSize,
+      network: network.map(n => ({
+        iface: n.iface,
+        tx_sec: n.tx_sec ?? 0,
+        rx_sec: n.rx_sec ?? 0
+      }))
+    });
+  } catch (err) {
+    console.error("Disk/Network error:", err);
+  }
+}
+
+// ----------------------------------------------------
+// REAL EVENT LOGS (Windows: Get-WinEvent, Linux: syslog)
+// ----------------------------------------------------
+async function emitEventLogs() {
+  try {
+    if (process.platform === "win32") {
+      const cmd =
+        'powershell -NoProfile -Command "Get-WinEvent -MaxEvents 50 | ' +
+        'Select-Object TimeCreated,ProviderName,Id,LevelDisplayName,Message | ' +
+        'ConvertTo-Json -Compress"';
+
+      exec(cmd, { maxBuffer: 20 * 1024 * 1024 }, (err, stdout) => {
+        if (err) return console.error("WinEvent error:", err.message);
+
+        try {
+          const parsed = stdout ? JSON.parse(stdout) : [];
+          const arr = Array.isArray(parsed) ? parsed : [parsed];
+          io.emit("events", arr);
+        } catch (e) {
+          console.error("Event JSON parse error:", e.message);
+        }
+      });
+
+    } else {
+      const logfile = "/var/log/syslog";
+
+      if (fs.existsSync(logfile)) {
+        exec(`tail -n 100 ${logfile}`, (err, stdout) => {
+          if (err) return;
+
+          const lines = stdout
+            .split("\n")
+            .filter(Boolean)
+            .map((line, i) => ({ time: null, Message: line }));
+
+          io.emit("events", lines);
+        });
+      }
+    }
+  } catch (err) {
+    console.error("emitEventLogs error:", err);
+  }
+}
+
+// ----------------------------------------------------
+// SOCKET CONNECTION
+// ----------------------------------------------------
 io.on("connection", (socket) => {
   console.log("WS client connected:", socket.id);
 
@@ -43,225 +189,128 @@ io.on("connection", (socket) => {
   });
 });
 
-// --- UTIL: build hierarchical process tree ---
-async function buildProcessTree() {
-  try {
-    const p = await si.processes();
-    const list = p.list || [];
-    const map = {};
-    list.forEach(proc => {
-      map[proc.pid] = { ...proc, children: [] };
-    });
-    const roots = [];
-    list.forEach(proc => {
-      const parent = map[proc.ppid];
-      if (parent) parent.children.push(map[proc.pid]);
-      else roots.push(map[proc.pid]);
-    });
-    return roots;
-  } catch (err) {
-    console.error("buildProcessTree error", err);
-    return [];
-  }
-}
-
-// --- EMITTERS ---
-// Emit CPU + RAM stats
-async function emitStats() {
-  try {
-    const cpu = await si.currentLoad();
-    const mem = await si.mem();
-    const stats = {
-      cpu: Number(cpu.currentLoad.toFixed(2)),
-      ram: Number(((mem.active / mem.total) * 100).toFixed(2)),
-      time: new Date().toISOString()
-    };
-    io.emit("stats", stats);
-    checkThresholdsAndEmitAlerts(stats);
-  } catch (err) {
-    console.error("emitStats error:", err);
-  }
-}
-
-// Emit process tree
-async function emitProcessTree() {
-  try {
-    const tree = await buildProcessTree();
-    io.emit("processTree", tree);
-  } catch (err) {
-    console.error("emitProcessTree error:", err);
-  }
-}
-
-// Emit disk I/O / drives / network stats
-async function emitDiskNetwork() {
-  try {
-    const diskIO = await si.disksIO();
-    const fsSize = await si.fsSize();
-    const network = await si.networkStats();
-    io.emit("diskNetwork", { diskIO, fsSize, network });
-  } catch (err) {
-    console.error("emitDiskNetwork error:", err);
-  }
-}
-
-// Emit live event logs (Windows: Get-WinEvent; Linux: tail syslog)
-async function emitEventLogs() {
-  try {
-    if (process.platform === "win32") {
-      // PowerShell Get-WinEvent to JSON
-      const cmd = 'powershell -NoProfile -Command "Get-WinEvent -MaxEvents 50 | Select-Object TimeCreated,ProviderName,Id,LevelDisplayName,Message | ConvertTo-Json -Compress"';
-      exec(cmd, { maxBuffer: 20 * 1024 * 1024 }, (err, stdout, stderr) => {
-        if (err) {
-          console.error("Get-WinEvent error:", err.message);
-          return;
-        }
-        try {
-          const events = stdout ? JSON.parse(stdout) : [];
-          // ensure array
-          const arr = Array.isArray(events) ? events : [events];
-          io.emit("events", arr);
-        } catch (e) {
-          console.error("parse events error:", e.message);
-        }
-      });
-    } else {
-      // Linux fallback: last 100 lines of syslog or journalctl
-      const logfile = "/var/log/syslog";
-      if (fs.existsSync(logfile)) {
-        exec(`tail -n 100 ${logfile}`, (err, stdout) => {
-          if (err) return;
-          const lines = stdout.split("\n").filter(Boolean).map((l, i) => ({ time: null, message: l }));
-          io.emit("events", lines);
-        });
-      } else {
-        // try journalctl if available
-        exec(`journalctl -n 100 --no-pager`, (err, stdout) => {
-          if (err) return;
-          const lines = stdout.split("\n").filter(Boolean).map((l, i) => ({ time: null, message: l }));
-          io.emit("events", lines);
-        });
-      }
-    }
-  } catch (err) {
-    console.error("emitEventLogs error:", err);
-  }
-}
-
-// Emit "liveLogs" (alias) — here we reuse events
-async function emitLiveLogs() {
-  await emitEventLogs();
-}
-
-// --- ALERTS (threshold driven) ---
-const ALERT_CONFIG = { cpu: 80, ram: 70, consecutiveCpuCountThreshold: 3 };
+// ----------------------------------------------------
+// ALERTING SYSTEM
+// ----------------------------------------------------
+const LIMITS = { cpu: 80, ram: 70, repeatCount: 3 };
 let cpuHighCount = 0;
 
-function checkThresholdsAndEmitAlerts(stats) {
-  if (!stats) return;
-  if (stats.cpu >= ALERT_CONFIG.cpu) cpuHighCount++;
+function handleAlerts(stats) {
+  if (stats.cpu >= LIMITS.cpu) cpuHighCount++;
   else cpuHighCount = 0;
 
-  if (cpuHighCount >= ALERT_CONFIG.consecutiveCpuCountThreshold) {
-    io.emit("alert", { type: "cpu", message: `CPU >= ${ALERT_CONFIG.cpu}% for ${cpuHighCount * 2}s`, stats });
+  if (cpuHighCount >= LIMITS.repeatCount) {
+    io.emit("alert", {
+      type: "cpu",
+      message: `CPU above ${LIMITS.cpu}% for ${cpuHighCount * 2}s`
+    });
   }
-  if (stats.ram >= ALERT_CONFIG.ram) {
-    io.emit("alert", { type: "ram", message: `RAM >= ${ALERT_CONFIG.ram}%`, stats });
+
+  if (stats.ram >= LIMITS.ram) {
+    io.emit("alert", {
+      type: "ram",
+      message: `RAM above ${LIMITS.ram}%`
+    });
   }
 }
 
-// --- ENDPOINT: kill process (POST /system/kill) ---
+// ----------------------------------------------------
+// PROCESS KILL ENDPOINT
+// ----------------------------------------------------
 app.post("/system/kill", (req, res) => {
   const { pid } = req.body;
-  if (!pid) return res.status(400).json({ error: "pid required" });
+  if (!pid) return res.status(400).json({ error: "PID required" });
 
-  try {
-    if (process.platform === "win32") {
-      exec(`taskkill /PID ${pid} /F`, (err, stdout, stderr) => {
-        if (err) return res.status(500).json({ ok: false, error: stderr || err.message });
-        return res.json({ ok: true, stdout });
-      });
-    } else {
-      try {
-        process.kill(pid, "SIGKILL");
-        return res.json({ ok: true });
-      } catch (err) {
-        // fallback to system kill
-        exec(`kill -9 ${pid}`, (e, out, st) => {
-          if (e) return res.status(500).json({ ok: false, error: st || e.message });
-          return res.json({ ok: true, stdout: out });
-        });
-      }
-    }
-  } catch (err) {
-    return res.status(500).json({ ok: false, error: err.message });
+  if (process.platform === "win32") {
+    exec(`taskkill /PID ${pid} /F`, (err, out, stderr) => {
+      if (err) return res.status(500).json({ error: stderr });
+      return res.json({ ok: true });
+    });
+  } else {
+    exec(`kill -9 ${pid}`, (err) => {
+      if (err) return res.status(500).json({ error: err.message });
+      return res.json({ ok: true });
+    });
   }
 });
 
-// --- ENDPOINT: generate PDF report (POST /report) ---
+// ----------------------------------------------------
+// PDF REPORT GENERATION
+// ----------------------------------------------------
 app.post("/report", (req, res) => {
-  const { title = "System Report", statsSnapshot = {}, chartImageBase64, processes = [], registry = [], events = [] } = req.body;
+  const {
+    title = "System Report",
+    statsSnapshot = {},
+    chartImageBase64,
+    processes = [],
+    registry = [],
+    events = []
+  } = req.body;
 
-  const doc = new PDFDocument({ size: "A4", margin: 40 });
+  const doc = new PDFDocument({ margin: 40 });
+
   res.setHeader("Content-Type", "application/pdf");
-  res.setHeader("Content-Disposition", `attachment; filename=system_report_${Date.now()}.pdf`);
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename=system_report_${Date.now()}.pdf`
+  );
+
   doc.pipe(res);
 
-  doc.fontSize(20).text(title, { underline: true });
+  doc.fontSize(22).text(title, { underline: true });
   doc.moveDown();
 
   doc.fontSize(12).text(`Generated: ${new Date().toLocaleString()}`);
   doc.moveDown();
 
-  doc.fontSize(14).text(`CPU: ${statsSnapshot.cpu ?? "N/A"}%`);
-  doc.text(`RAM: ${statsSnapshot.ram ?? "N/A"}%`);
+  doc.fontSize(14).text(`CPU: ${statsSnapshot.cpu}%`);
+  doc.text(`RAM: ${statsSnapshot.ram}%`);
   doc.moveDown();
 
   if (chartImageBase64) {
     try {
-      const data = chartImageBase64.replace(/^data:image\/\w+;base64,/, "");
-      const imgBuf = Buffer.from(data, "base64");
-      doc.image(imgBuf, { fit: [480, 240] });
+      const img = chartImageBase64.replace(/^data:image\/\w+;base64,/, "");
+      const buf = Buffer.from(img, "base64");
+      doc.image(buf, { fit: [480, 240] });
       doc.moveDown();
-    } catch (err) {
-      console.error("PDF image error", err);
+    } catch (e) {
+      console.error("Chart image error:", e);
     }
   }
 
-  doc.fontSize(14).text("Top Processes:");
+  doc.addPage().fontSize(14).text("Processes:");
   doc.fontSize(10);
-  processes.slice(0, 50).forEach(p => doc.text(`${p.pid} - ${p.name} ${p.cpu ? `(${p.cpu}%)` : ""}`));
+  processes.slice(0, 100).forEach((p) =>
+    doc.text(`${p.pid} - ${p.name} - CPU ${p.cpu ?? 0}%`)
+  );
 
-  doc.addPage();
-  doc.fontSize(14).text("Registry:");
+  doc.addPage().fontSize(14).text("Event Logs:");
   doc.fontSize(10);
-  (registry || []).forEach(r => doc.text(`${r.name}: ${r.value}`));
-
-  doc.addPage();
-  doc.fontSize(14).text("Event Logs:");
-  doc.fontSize(10);
-  (events || []).slice(0, 200).forEach(e => doc.text(e.Message ?? e.message ?? JSON.stringify(e)));
+  events.slice(0, 150).forEach((e) =>
+    doc.text(e.Message || e.message || JSON.stringify(e))
+  );
 
   doc.end();
 });
 
-// --- Schedule periodic emits ---
-const EMIT_INTERVAL_MS = 2000;
-setInterval(emitStats, EMIT_INTERVAL_MS);
-setInterval(emitProcessTree, 10000);
-setInterval(emitEventLogs, 5000);
+// ----------------------------------------------------
+// CRON: INTERVAL EMITTERS
+// ----------------------------------------------------
+setInterval(emitStats, 2000);
 setInterval(emitDiskNetwork, 3000);
-// and also a compact combined poll every EMIT_INTERVAL_MS which updates quickly:
-setInterval(async () => {
-  await emitStats();
-  // keep process tree and disk/network less frequent above
-}, EMIT_INTERVAL_MS);
+setInterval(emitProcessTree, 7000);
+setInterval(emitEventLogs, 5000);
 
-// quick initial emit
+// initial emits
 emitStats();
+emitDiskNetwork();
 emitProcessTree();
 emitEventLogs();
-emitDiskNetwork();
 
+// ----------------------------------------------------
+// START SERVER
+// ----------------------------------------------------
 const PORT = process.env.PORT || 5000;
-httpServer.listen(PORT, () => console.log(`Backend running on port ${PORT}`));
+httpServer.listen(PORT, () => {
+  console.log(`Backend running on port ${PORT}`);
+});

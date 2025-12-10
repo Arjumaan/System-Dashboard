@@ -1,5 +1,11 @@
 // frontend/src/context/StatsContext.jsx
-import React, { createContext, useContext, useEffect, useRef, useState } from "react";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  useState
+} from "react";
 import { io } from "socket.io-client";
 
 const StatsContext = createContext();
@@ -8,65 +14,91 @@ export function StatsProvider({ children }) {
   const socketRef = useRef(null);
 
   const [latest, setLatest] = useState({ cpu: 0, ram: 0, time: null });
-  const [history, setHistory] = useState([]); // rolling {time,cpu,ram}
+  const [history, setHistory] = useState([]);
   const [processTree, setProcessTree] = useState([]);
-  const [events, setEvents] = useState([]); // raw event objects
-  const [diskNetwork, setDiskNetwork] = useState({ diskIO: {}, fsSize: [], network: [] });
+  const [events, setEvents] = useState([]);
+  const [diskNetwork, setDiskNetwork] = useState({
+    diskIO: {},
+    fsSize: [],
+    network: []
+  });
   const [alerts, setAlerts] = useState([]);
 
   useEffect(() => {
-    // change URL if your backend is remote (use env var)
-    const SOCKET_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:5000";
-    socketRef.current = io(SOCKET_URL, { transports: ["websocket", "polling"] });
+    const SOCKET_URL =
+      import.meta.env.VITE_BACKEND_URL || "http://localhost:5000";
+
+    socketRef.current = io(SOCKET_URL, {
+      transports: ["websocket", "polling"]
+    });
+
     const s = socketRef.current;
 
-    s.on("connect", () => console.log("socket connected", s.id));
+    s.on("connect", () => {
+      console.log("Socket Connected:", s.id);
+    });
 
+    // ---- Live CPU/RAM Stats ----
     s.on("stats", (st) => {
       if (!st) return;
+
       setLatest(st);
-      setHistory(prev => {
-        const next = [...prev.slice(-119), { time: new Date(st.time).toLocaleTimeString(), cpu: st.cpu, ram: st.ram }];
-        return next;
-      });
+
+      setHistory((prev) => [
+        ...prev.slice(-119),
+        {
+          time: new Date(st.time).toLocaleTimeString(),
+          cpu: st.cpu,
+          ram: st.ram
+        }
+      ]);
     });
 
+    // ---- Process Tree ----
     s.on("processTree", (tree) => {
-      setProcessTree(Array.isArray(tree) ? tree : (tree ? [tree] : []));
+      if (!tree) return;
+      setProcessTree(Array.isArray(tree) ? tree : [tree]);
     });
 
+    // ---- Event Logs ----
     s.on("events", (ev) => {
-      // normalize to array
       const arr = Array.isArray(ev) ? ev : [ev];
-      setEvents(prev => {
-        const combined = [...arr.reverse(), ...prev].slice(0, 1000); // newest first
-        return combined;
-      });
+
+      setEvents((prev) =>
+        [...arr.reverse(), ...prev].slice(0, 1000) // newest first
+      );
     });
 
-    s.on("diskNetwork", (dn) => {
-      setDiskNetwork(dn || {});
+    // ---- Disk & Network ----
+    s.on("diskNetwork", (dn) => setDiskNetwork(dn || {}));
+
+    // ---- Live Logs ----
+    s.on("liveLogs", (log) => {
+      if (log)
+        setEvents((prev) => [log, ...prev].slice(0, 1000));
     });
 
-    s.on("liveLogs", (l) => {
-      setEvents(prev => [l, ...prev].slice(0, 1000));
+    // ---- Alerts ----
+    s.on("alert", (alert) => {
+      if (!alert) return;
+      setAlerts((prev) => [alert, ...prev].slice(0, 50));
     });
 
-    s.on("alert", (a) => {
-      if (!a) return;
-      setAlerts(prev => [a, ...prev].slice(0, 50));
-      // optional: prune alerts older than N
+    s.on("disconnect", () => {
+      console.log("Socket Disconnected");
     });
-
-    s.on("disconnect", () => console.log("socket disconnected"));
 
     return () => {
-      try { s.disconnect(); } catch(e){}
+      try {
+        s.disconnect();
+      } catch (_) {}
     };
   }, []);
 
   return (
-    <StatsContext.Provider value={{ latest, history, processTree, events, diskNetwork, alerts }}>
+    <StatsContext.Provider
+      value={{ latest, history, processTree, events, diskNetwork, alerts }}
+    >
       {children}
     </StatsContext.Provider>
   );

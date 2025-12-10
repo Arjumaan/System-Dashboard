@@ -15,14 +15,21 @@ export default function ProcessTree() {
   const backend = import.meta.env.VITE_BACKEND_URL || "http://localhost:5000";
 
   const killProcess = async (pid) => {
-    await axios.post(`${backend}/system/kill`, { pid });
+    try {
+      await axios.post(`${backend}/system/kill`, { pid });
+      alert(`Kill requested for PID ${pid}`);
+    } catch (err) {
+      alert("Kill failed: " + (err.response?.data?.error || err.message));
+    }
   };
 
   const filtered = (tree) => {
     if (!query) return tree;
     const q = query.toLowerCase();
-    return tree.filter((node) =>
-      node.name?.toLowerCase().includes(q) || String(node.pid).includes(query)
+    return tree.filter(
+      (node) =>
+        node.name?.toLowerCase().includes(q) ||
+        String(node.pid).includes(query)
     );
   };
 
@@ -62,7 +69,6 @@ export default function ProcessTree() {
         )}
       </div>
 
-      {/* Context Menu */}
       {contextMenu && (
         <div
           className="fixed bg-white dark:bg-gray-700 border shadow-lg rounded py-2 text-sm z-50"
@@ -81,7 +87,6 @@ export default function ProcessTree() {
         </div>
       )}
 
-      {/* Confirm Modal */}
       <ConfirmModal
         open={confirmOpen}
         title="Terminate Process"
@@ -107,12 +112,17 @@ function Node({ node, onKill, openContextMenu }) {
       >
         <div className="flex items-center gap-2">
           {node.children?.length > 0 && (
-            <button onClick={() => setOpen(!open)}>{open ? "▾" : "▸"}</button>
+            <button onClick={() => setOpen(!open)}>
+              {open ? "▾" : "▸"}
+            </button>
           )}
 
           <div>
             <div className="font-semibold dark:text-white">
-              {node.name} <span className="text-xs text-gray-500">({node.pid})</span>
+              {node.name}{" "}
+              <span className="text-xs text-gray-500">
+                ({node.pid})
+              </span>
             </div>
             <div className="text-xs text-gray-500">{node.user}</div>
           </div>
